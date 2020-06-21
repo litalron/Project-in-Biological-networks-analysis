@@ -1,0 +1,136 @@
+import numpy as np
+import MMM
+import time
+import utils
+
+# SimpleCloud class - execute dynamic number of signatures in cloud model .
+
+
+class SimpleCloud:
+
+    """
+    inputs:
+            e- matrix- each row is a signature.
+            threshold- the threshold for sorting the data to sky and cloud.
+            data- a nested dictionary- a dictionary with a key to each patient, each key's value is a dictionary
+                  which each key represent a chromosome, each chromosome keys is a dictionary with two keys.
+                  The first key is 'mutations' with value of a list of int representing mutations in the chromosome,
+                  and the second key is 'distances' with value of a list of the distance of each mutation from the
+                  mutation before it.
+            signum- the number of signature to use in the cloud.
+            s- number of signatures provided in e.
+            m- number of mutations kinds.
+    fields:
+            self.m- number of mutation kinds.
+            self.s- number of signatures.
+            self.e- matrix that each row in it represents a signature.
+            self.signum- number of signatures to use in cloud.
+            self.thresholds- a list of thresholds containing one threshold for sorting the mutations to sky
+                             and cloud.
+            self data- a nested dictionary- a dictionary with a key to each patient, each key's value is a dictionary
+                  which each key represent a chromosome, each chromosome value is a matrix of the
+                  shape (len(threshold), m). Each row in the matrix is the counts of mutations of each kind in a certain
+                  range of distances.
+            self.piMatrix- a 3D matrix of the shape (number of patients, number of signatures). Each row is the
+                      exposure vector trained over all the chromosomes of a patient.
+            self.CloudFilter- a vector that contains the indexes of the signatures in matrix self.e sorted by the
+                              activity of the signatures in the patients.
+            self.cloudE- a matrix that each row is a signature to be used in the training of cloud.
+            self.likelihood- a matrix that each element contains the likelihood of a chromosome of a patient
+                             according to a model that was trained over the rest of the patient's chromosomes.
+    output:
+            the object contains log likelihood of all the chromosomes in each patient in cross validation
+            in the field- likelihood: matrix of the shape
+            (number of patients in the data, number of chromosomes each patient has).
+    """
+    def __init__(self, e, threshold, data, signum, s=12, m=96):
+        self.m = m
+        self.s = s
+        self.e = e
+        self.signum = signum
+        self.thresholds = [threshold]
+        self.data = utils.organize_multi_data(data, self.thresholds, m)
+        self.piMatrix = self.pi_matrix()
+        self.cloudFilter = self.create_filter()
+        self.cloudE = self.e[self.cloudFilter[self.s-self.signum:self.s]]
+        self.likelihood = np.zeros((len(self.data), len(self.data[list(self.data.keys())[0]])))
+        self.training()
+
+    """
+    self- a SimpleCloud object.
+        runs over self.data and calculates log likelihood of cross validation (in method leave one out)
+        for each chromosome for each patient, and storing it in self.likelihood.
+    """
+    def training(self):
+        patient_number = 0
+        for patient in self.data:
+            chromosome_number = 0
+            for ch in self.data[patient]:
+                train_data = utils.sum_ch(patient, ch, self.data, self.m, self.thresholds)
+                self.likelihood[patient_number][chromosome_number] = self.train(train_data, patient, ch)
+                chromosome_number += 1
+            patient_number += 1
+        return
+
+    """
+    inputs:
+        self- a SimpleCloud object.
+        train_data- the data provided to the EM algorithm for training.
+        patient- patient key in the dictionary self.data.
+        ch- the chromosome key in self.data[patient] which left out for the cross validation.
+    output:
+        log_likelihood- the calculated log likelihood of the mutations in chromosome ch provided the trained
+                        MMM model.
+    """
+    def train(self, train_data, patient, ch):
+        cloud = MMM.MMM(train_data[0], self.cloudE, [], len(self.cloudE), self.m)
+        cloud.train()
+        log_likelihood = cloud.out_likelihood(self.data[patient][ch][0])
+        sky = MMM.MMM(train_data[1], self.e, [], self.s, self.m)
+        sky.train()
+        log_likelihood += sky.out_likelihood(self.data[patient][ch][1])
+        return log_likelihood
+
+    """
+    inputs:
+        self- a SimpleCloud object.
+    output:
+        pi_matrix- a matrix of shape (number of patient in self.data X number of signatures)
+                   each row is the exposure vector maximize the likelihood of all the mutations in a patient DNA.
+    """
+    def pi_matrix(self):
+        pi_matrix = np.zeros((len(self.data), self.s))
+        p = 0
+        for patient in self.data:
+            d = self.simple_sum_ch(patient)
+            M = MMM.MMM(d, self.e, pi=[], s=self.s, m=self.m)
+            MMM.MMM.train(M)
+            pi_matrix[p] = np.exp(M.logPi)
+            p += 1
+        return pi_matrix
+
+    """
+    inputs:
+        self- a SimpleCloud object.
+        patient- a key that represent a patient in self.data.
+    output:
+        train_data- a vector with counts of each mutation kind in the patient DNA. 
+    """
+    def simple_sum_ch(self, patient):
+        train_data = np.zeros(self.m)
+        for ch in self.data[patient]:
+            train_data = train_data + self.data[patient][ch][0]
+        return train_data
+
+    """
+    input:
+        self- a SimpleCloud object.
+    output:
+        sort- an array of indexes. Each index represent a signature. The vector sort is sorted from the signature
+              that was active the least in the patients, to the signature that was most active in the patients.
+    """
+    def create_filter(self):
+        q = self.piMatrix
+        activity = np.count_nonzero(q > 1e-5, 0)
+        sort = np.argsort(activity)
+        return sort
