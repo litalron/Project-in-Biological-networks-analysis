@@ -1,0 +1,78 @@
+import sig13
+import numpy as np
+import json
+import MultiModel
+import simpleCloud
+
+"""
+input:
+    np_2d_array- 2D numpy array.
+output:
+    data- a copy of np_2d_array as a python list.
+"""
+
+
+def np_array_to_list(np_2d_array):
+    data = [0]*len(np_2d_array)
+    for i in range(0, len(np_2d_array)):
+        data[i] = list(np_2d_array[i])
+    return data
+
+
+"""
+start function -     gets a model type and runs it on the provided data. Writes log likelihood of cross validation in a file named out_json_file_name.json
+
+input:
+    thresholds- a list of thresholds for division of the data. If the model is not MultiModel, only the first
+                threshold is taken as a threshold to the model.
+                * for regular MMM, put thresholds == [].
+    model- specifies the model to be used: 0- Sky Cloud and regular MMM , 1- Sig13, 2- dynamic number of signatures for cloud model(simpleCloud).
+            * for regular MMM, put  model == 0 and thresholds ==[].
+    data- a nested dictionary- a dictionary with a key to each patient, each key's value is a dictionary
+          which each key represent a chromosome, each chromosome keys is a dictionary with two keys.
+          The first key is 'mutations' with value of a list of int representing mutations in the chromosome,
+          and the second key is 'distances' with value of a list of the distance of each mutation from the
+          mutation before it.
+    s- number of signatures.
+    m- number of mutations kinds.
+    e- a matrix of shape s X m. Each row in it represents a signature. 
+    pi- an exposure vector of length s.
+    out_json_file_name- the name of the file the log likelihood of the model in cross validation will be written.
+    sig_num- number of signatures to be used in cloud in SimpleCloud model. Used only in SimpleCloud model.
+    iterations- number of iterations to be used in Sig13 model for learning the 13rd signatures for sky and cloud.
+                used only in Sig13 model. 
+    
+    input for each model:
+        regular MMM - model= 0, thresholds = [], data, e, pi, s, m out_json_file_name
+        Sky Cloud- model=0 , thresholds != 0, data, e, pi, s, m out_json_file_name.
+        Sig13- model =1 , thresholds, data, e, s, m, out_json_file_name, iterations.
+        SimpleCloud- model =2, thresholds, data, e, s, m, out_json_file_name, sig_num.
+"""
+
+
+def start(model, thresholds, data, e, pi=None, s=12, m=96, out_json_file_name="likelihood", sig_num=None
+          , iterations=None):
+    if model == 0:
+        multi_model_model = MultiModel.MultiModel(e, pi, thresholds, data, s, m)
+        log_likelihood = np_array_to_list(multi_model_model.likelihood)
+    if model == 1:
+        sig13_model = sig13.Sig13(e, thresholds[0], data, s+1, m, iterations)
+        log_likelihood = np_array_to_list(sig13_model.likelihood[iterations-1])
+    if model == 2:
+        simple_cloud_model = simpleCloud.SimpleCloud(e, thresholds[0], data, sig_num, s, m)
+        log_likelihood = np_array_to_list(simple_cloud_model.likelihood)
+    with open(out_json_file_name + ".json", 'w') as out_file:
+        json.dump(log_likelihood, out_file)
+        out_file.close()
+
+
+def main():
+    signaures = np.load("BRCA-signatures.npy")
+    d = "BRCA-dataset.json"
+    with open(d) as data:
+        c = json.load(data)
+    data.close()
+    start(0, [2000], c, signaures,out_json_file_name="multimodel2000")
+
+
+main()
