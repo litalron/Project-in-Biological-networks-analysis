@@ -1,0 +1,110 @@
+import numpy as np
+import MMM
+import time
+import utils
+
+
+#Sig13 class - execute signature 13 model.
+
+class Sig13:
+
+    """
+    inputs:
+            e- matrix- each row is a signature.
+            threshold- the threshold for sorting the data to sky and cloud.
+            data- a nested dictionary- a dictionary with a key to each patient, each key's value is a dictionary
+                  which each key represent a chromosome, each chromosome keys is a dictionary with two keys.
+                  The first key is 'mutations' with value of a list of int representing mutations in the chromosome,
+                  and the second key is 'distances' with value of a list of the distance of each mutation from the
+                  mutation before it.
+            s- number of signatures provided in e.
+            m- number of mutations kinds.
+            iterations- number of iterations for learning the 13 signature dor sky and cloud.
+    fields:
+            self.iterations- the number of iterations for learning the new  signatures for sky and cloud.
+            self.m- number of mutation kinds.
+            self.s- number of signatures, including the one that is learned in the algorithm.
+            self.e- matrix that each row in it represents a signature.
+            self.array_pi- a 4D matrix of shape (2,number of patients, number of chromosomes, number of signatures).
+                           contains the exposure vectors for each sky and cloud
+            self.thresholds- a list of thresholds containing one threshold for sorting the mutations to sky and cloud
+            self data- a nested dictionary- a dictionary with a key to each patient, each key's value is a
+            dictionary which each key represent a chromosome, each chromosome keys is a matrix of the
+                  shape (len(threshold), m). Each row in the matrix is the counts of mutations of each kind
+                  in a certain range of distances.
+            self.modelList- a list of MMM objects, one for cloud and one for sky. Recreated for every new chromosome
+                       during the running of the program.
+            self.likelihood- a matrix that each element contains the likelihood of a chromosome of a patient
+                             according to a model that was trained over the rest of the patient's chromosomes.
+
+    output:
+        the object contains log likelihood of all the chromosomes in each patient in each iteration in cross
+        validation in the field- likelihood: matrix of the shape
+        (self.iterations, number of patients in the data, number of chromosomes each patient has).
+    """
+    def __init__(self, e, threshold, data, s=13, m=96, iterations=5):
+        self.iterations = iterations
+        self.m = m
+        self.s = s
+        self.e = e
+        self.array_pi = np.zeros((2, 560, 24, self.s))
+        self.thresholds = [threshold]
+        self.data = utils.organize_multi_data(data, self.thresholds, m)
+        self.ModelList = []
+        self.likelihood = np.zeros((self.iterations, len(self.data), len(self.data[list(self.data.keys())[0]])))
+        self.train_sig13()
+
+    """
+    inputs:
+        s- number of signatures.
+    output:
+        pi- a vector of length s that its sum is normalized to 1.
+    """
+    @staticmethod
+    def random_pi(s):
+        pi = np.random.random(s)
+        pi[:-1] /= np.sum(pi[:-1])
+        pi[:-1] = pi[:-1] * (1-pi[-1])
+        return pi
+
+    """
+    input:
+        self- a Sig13 object.
+        c- chromosome number.
+        p- patient number.
+        j- a number that represents sky or cloud. 1= sky, 0=cloud.
+    output:
+        new_e- a matrix of signatures. Each row is a signature. The first self.s-1 are the regular signatures,
+               and the last is a linear combination of the s-1 other signatures according to the trained
+               exposure vector of 1-j.
+    """
+    def e13(self, c, p, j):
+        new_e = np.zeros((self.s, self.m))
+        new_e[0:self.s-1, :] = self.e
+        new_e[self.s-1] = np.sum((self.array_pi[1-j][p][c][0:self.s-1])*self.e.T, axis=1)/(np.sum(self.array_pi[1-j][p][c][0:self.s-1]))
+        return new_e
+
+    """
+        self- a Sig13 object.
+            runs over self.data and calculates log likelihood of cross validation (in method leave one out)
+            for each chromosome for each patient, and storing it in self.likelihood.
+            storing the exposure vector in array_pi from the last iteration of learning signature number s.
+    """
+    def train_sig13(self):
+        for i in range(self.iterations):
+            p = 0
+            for patient in self.data:
+                c = 0
+                for ch in self.data[patient]:
+                    for j in range(1, -1, -1):
+                        if i == 0:
+                            self.array_pi[j][p][c] = Sig13.random_pi(self.s)
+                    for j in range(1, -1, -1):  # starts from 1 - sky, 0 - cloud
+                        d = utils.sum_ch(patient, ch, self.data, self.m)
+                        m = MMM.MMM(d[j], self.e13(c, p, j), pi=self.array_pi[j][p][c], s=self.s, m=self.m)
+                        MMM.MMM.train(m)
+                        self.array_pi[j][p][c] = np.exp(m.logPi)
+                        self.likelihood[i][p][c] += m.out_likelihood(self.data[patient][ch][j])
+
+                    c += 1
+                p += 1
