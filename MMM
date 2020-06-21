@@ -1,0 +1,109 @@
+import numpy as np
+import scipy.misc as mis
+upper_limit = 1000000000000
+deltaLogLike = 0.001
+
+# MMM class - execute MMM model and EM algorithm.
+
+class MMM:
+
+    """
+    inputs:
+            pi- the exposure vector of length m. The sum equals 1. If empty, created randomly.
+            e- matrix- each row is a signature. The sum of each row equals 1. If empty, created randomly.
+            data- a vector of length m. Contains count of mutations from each kind of mutation.
+            s- number of signatures provided in e.
+            m- number of mutations kinds.
+            iterations- maximum number of iterations in the EM algorithm.
+    fields:
+            self.logE- the log of the matrix e. shape: (s,m).
+            self.logPi- the log of the exposure vector of length m.
+            self.iterations- the maximum number of iterations for the EM algorithm.
+            self.data- a vector of length m. Each element in the vector contains the count of a kind of a mutation.
+            self.s- number of signatures.
+            self.m- number of mutation kinds.
+            self.logLikelihood- the log likelihood of self.data according of the current parameters of the MMM
+                                model.
+    """
+    def __init__(self,  data, e=None, pi=None, s=12, m=96, iterations=upper_limit):
+        self.iterations = iterations
+        self.data = np.zeros(m, dtype = int)
+        self.data = data
+        self.s = s
+        self.m = m
+        if e is None:
+            e = np.random.random((s, m))
+            e = (e.T / e.sum(1)).T
+            self.logE = np.log(e)
+        else:
+            e = (e.T / e.sum(1)).T
+            self.logE = np.log(e)
+        if pi == [] or pi is None:
+            pi = np.random.random(s)
+            pi /= pi.sum()
+            self.logPi = np.log(pi)
+        else:
+            pi /= pi.sum()
+            self.logPi = np.log(pi)
+        self.logLikelihood = -np.Infinity
+
+    """
+        input:
+            self- a MMM object.
+        executes the EM algorithm.
+    """
+    def train(self):
+        iterations = 0
+        log_s_times = np.zeros(self.s)
+        log_m_caused_by_s = np.zeros((self.s, self.m))
+        new_log_likelihood = MMM.iteration(self, log_s_times, log_m_caused_by_s)
+        while (iterations < self.iterations) & (new_log_likelihood - self.logLikelihood > deltaLogLike):
+            self.logLikelihood = new_log_likelihood
+            new_log_likelihood = MMM.iteration(self, log_s_times, log_m_caused_by_s)
+            iterations += 1
+
+    """
+        input:
+            self- a MMM object.
+            log_s_times- a vector of length self.s.
+            log_m_caused_by_s- a matrix of shape (self.s, self.m).
+        output:
+            the log likelihood of self.data according to current model parameters self.logPi and self.logE.
+    """
+    def iteration(self, log_s_times, log_m_caused_by_s):
+        # calculation of probability for a mutation
+        prob_matrix = self.logPi + self.logE.T
+        log_m_prob = mis.logsumexp(prob_matrix, axis=1)
+        # calculation of probability that a certain signature caused a mutation provided the mutation
+        log_s_prov_m = prob_matrix.T - log_m_prob
+        # calculation of number of mutations of a certain type that a certain signature caused
+        log_m_caused_by_s = np.log(self.data) + log_s_prov_m
+        # calculation of number of times that a certain signature caused a mutatiom (number of times that the signature was active)
+        log_s_times = mis.logsumexp(log_m_caused_by_s, axis=1)
+        # Signatures probability calculation
+        self.logPi = log_s_times - mis.logsumexp(log_s_times)
+        log_likelihood = self.likelihood()
+        return log_likelihood
+
+    """
+        input:
+            self- a MMM object.
+        output:
+            likelihood- the log likelihood of self.data.
+    """
+    def likelihood(self):
+        log_p_mutation = mis.logsumexp(self.logPi + self.logE.T, axis=1)
+        likelihood = np.inner(log_p_mutation, self.data)
+        return likelihood
+
+    """
+        input:
+            self- a MMM object.
+            data- the data that it's likelihood is calculated.
+        output:
+            likelihood- the log likelihood of data.
+    """
+    def out_likelihood(self, data):
+        log_p_mutation = mis.logsumexp(self.logPi + self.logE.T, axis=1)
+        likelihood = sum(np.multiply(log_p_mutation, data))
+        return likelihood
