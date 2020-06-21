@@ -1,0 +1,148 @@
+import numpy as np
+
+# utils class - includes functions which sort data and creates the data for train.
+
+"""
+input:
+    patient- a key in data that represent a patient.
+    ch- a key in data[patient] that represent a chromosome.
+    data- a dictionary that each key in it represents a patient. Each key has a value of a dictionary. Each key in
+          the patient dictionary represents a chromosome and has a value of a numpy array with counts of mutations
+          from each kind.
+    m- number of mutation kinds.
+    thresholds- a list of thresholds of the distances between mutations.
+    
+    output:
+        train_data- a matrix of the shape ((len(thresholds) + 1, m)). Each row is the counts of all the mutations 
+        kinds in the chromosomes of the patient in a range of distances, but the chromosome ch.
+"""
+
+
+def sum_ch(patient, ch, data, m, thresholds=[]):
+    train_data = np.zeros((len(thresholds) + 1, m))
+    for ch1 in data[patient]:
+        if ch != ch1:
+            train_data = train_data + data[patient][ch1]
+    return train_data
+
+
+"""
+    input:
+        data- a nested dictionary- a dictionary with a key to each patient, ech key's value is a dictionary
+              which each key represent a chromosome, each chromosome keys is a dictionary with two keys.
+              The first key is 'mutations' with value of a list of int representing mutations in the chromosome,
+              and the second key is 'distances' with value of a list of the distance of each mutation from the
+              mutation before it.
+        thresholds- a list of thresholds over the distances between mutations. The Mutations are sorted to groups 
+                    according those thresholds.
+        m- the number of mutations kinds.
+    output:
+        orgonizedData- a nested dictionary- a dictionary with a key to each patient, each key's value is a dictionary
+                  which each key represent a chromosome, each chromosome keys is a matrix of the 
+                  shpae (len(threshold), m). Each row in the matrix is the counts of mutations of each kind in
+                  a certain range of distances.
+"""
+
+
+def organize_multi_data(data, thresholds, m=96):
+    organized_data = {}
+    for patient in data:
+        organized_data[patient] = {}
+        for ch in data[patient]:
+            organized_data[patient][ch] = np.zeros((len(thresholds) + 1, m))
+    inside_organize_multi_data(data, thresholds, organized_data)
+    return organized_data
+
+
+"""
+    input:
+        data- a nested dictionary- a dictionary with a key to each patient, ech key's value is a dictionary
+              which each key represent a chromosome, each chromosome keys is a dictionary with two keys.
+              The first key is 'mutations' with value of a list of int representing mutations in the chromosome,
+              and the second key is 'distances' with value of a list of the distance of each mutation from the
+              mutation before it.
+        thresholds- a list of thresholds over the distances between mutations. The Mutations are sorted to groups 
+                    according those thresholds.
+        orgonizedData- a nested dictionary- a dictionary with a key to each patient, each key's value is a
+                  dictionary which each key represent a chromosome, each chromosome keys is a matrix of the 
+                  shpae (len(threshold), m). Each row in the matrix will be the counts of mutations of each kind
+                  in a certain range of distances. All the matrix elements are zero at first.
+    output:
+        orgonizedData- a nested dictionary- a dictionary with a key to each patient, each key's value is a dictionary
+                  which each key represent a chromosome, each chromosome keys is a matrix of the 
+                  shpae (len(threshold), m). Each row in the matrix is the counts of mutations of each kind in a certain
+                  range of distances.
+"""
+
+
+def inside_organize_multi_data(data, thresholds, organized_data):
+    for patient in data:
+        for ch in data[patient]:
+            for i in range(len(thresholds)):
+                update_ch(data[patient][ch], thresholds[i], organized_data[patient][ch], i)
+            for i in data[patient][ch]["mutations"]:
+                organized_data[patient][ch][len(thresholds)][i] += 1
+
+
+"""
+input:
+    ch- a dictionary with 2 keys: 'mutations' which value is a list of mutations and 'distances' with a value of
+        list of distances between two neighboring mutations (each time this function is used ch is updated to
+        contain only the mutations that were not sorted yet and the corresponding distances between them).
+    threshold- a threshold over the distances between mutations. The mutations are sorted according this threshold.
+    ch0- a matrix. Each row represent a range of distances between mutations. Each row is the counts of the
+        mutations of each kind in the corresponding range of distances.
+    Range- the number of the current range that is sorted.
+    
+    output:
+        updates ch0 to contain mutations count of each kind of a range
+        updates ch to contain only mutations that were not sorted yet, and their corresponding distances.
+"""
+
+
+def update_ch(ch, threshold, ch0, range0):
+    curr_in_range = 0
+    distances = []
+    mutations = []
+    distance = 0
+    if len(ch["distances"]) == 1:
+        ch0[range0][ch["mutations"][0]] += 1
+    for i in range(1, len(ch["distances"])):
+        last_in_range = curr_in_range
+        curr_in_range = is_in_range(ch["distances"][i], threshold)
+        if curr_in_range or last_in_range:
+            distance += ch["distances"][i - 1]
+            ch0[range0][ch["mutations"][i - 1]] += 1
+            if curr_in_range and i + 1 == len(ch["distances"]):
+                ch0[range0][ch["mutations"][i]] += 1
+            if i + 1 == len(ch["distances"]) and curr_in_range == 0:
+                mutations.append(ch["mutations"][i])
+                distance += ch["distances"][i]
+                distances.append(distance)
+        else:
+            distance += ch["distances"][i - 1]
+            distances.append(distance)
+            distance = 0
+            mutations.append(ch["mutations"][i - 1])
+            if i + 1 == len(ch["distances"]):
+                mutations.append(ch["mutations"][i])
+                distances.append(ch["distances"][i])
+    ch["mutations"] = mutations
+    ch["distances"] = distances
+
+
+"""
+input:
+    distance- a distance between two mutations.
+    threshold- a threshold on distances between mutations.
+output:
+    1- distance is smaller than or equal to threshold.
+    0- distance is bigger than threshold.
+"""
+
+
+def is_in_range(distance, threshold):
+    if distance <= threshold:
+        return 1
+    else:
+        return 0
